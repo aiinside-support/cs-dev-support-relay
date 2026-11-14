@@ -11,7 +11,7 @@ jobs:
   relay:
     runs-on: ubuntu-latest
     steps:
-      - name: Create Issue in Private Repo and Clean Up Public Issue
+      - name: Process Relay Request
         env:
           TARGET_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -20,10 +20,32 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          # === 以降（thread_id行）を除いた綺麗な本文を抽出
+          # パターンA：一覧取得リクエストの場合
+          if [ "$ISSUE_TITLE" = "[LIST_REQUEST]" ]; then
+            ISSUES_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues?state=open&per_page=30")
+
+            LIST_TEXT=$(echo "$ISSUES_JSON" | jq -r '
+              [.[] | select(.pull_request == null)] |
+              if length == 0 then
+                "現在対応中のIssueはありません。"
+              else
+                map("・#" + (.number|tostring) + " [" + ([.labels[].name] | join(", ")) + "] " + .title) | join("\n")
+              end
+            ')
+
+            curl -s -X PATCH \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$SRC_REPO/issues/$ISSUE_NUMBER" \
+              -d "$(jq -n --arg body "$LIST_TEXT" '{title: "List Completed", body: $body, state: "closed"}')"
+            exit 0
+          fi
+
+          # パターンB：通常の新規Issue転送（従来通り）
           CLEAN_BODY=$(echo "$ISSUE_BODY" | sed '/^===$/,$d')
 
-          # 1. PrivateリポジトリへIssueを作成
           RESPONSE=$(curl -s -X POST \
             -H "Authorization: Bearer $TARGET_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -36,7 +58,6 @@ jobs:
             exit 1
           fi
 
-          # 2. Public側のタイトルに「本物の番号」を記録し、thread_idだけ残してClose
           THREAD_ID=$(echo "$ISSUE_BODY" | grep '^thread_id:' | cut -d':' -f2-)
           curl -s -X PATCH \
             -H "Authorization: Bearer $GH_TOKEN" \
