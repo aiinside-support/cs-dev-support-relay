@@ -1,0 +1,44 @@
+name: Relay Issue to Private Repo
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Issue in Private Repo and Clean Up Public Issue
+        uses: actions/github-script@v7
+        env:
+          TARGET_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+        with:
+          script: |
+            const { Octokit } = require("@octokit/rest");
+            const targetOctokit = new Octokit({ auth: process.env.TARGET_TOKEN });
+
+            const srcIssue = context.payload.issue;
+            const owner = 'aii-arakidaisuke';
+            const targetRepo = 'cs-dev-support';
+
+            // 1. Privateリポジトリに同じタイトル・本文・ラベルでIssueを作成
+            const created = await targetOctokit.rest.issues.create({
+              owner,
+              repo: targetRepo,
+              title: srcIssue.title,
+              body: srcIssue.body || '',
+              labels: ['status: 新規']
+            });
+
+            // 2. セキュリティ保護のためPublic側の内容を即時消去してClose
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: srcIssue.number,
+              title: `Relayed #${created.data.number}`,
+              body: 'Transferred to private repository.',
+              state: 'closed'
+            });
