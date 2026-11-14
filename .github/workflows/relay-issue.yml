@@ -12,33 +12,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Create Issue in Private Repo and Clean Up Public Issue
-        uses: actions/github-script@v7
         env:
           TARGET_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
-        with:
-          script: |
-            const { Octokit } = require("@octokit/rest");
-            const targetOctokit = new Octokit({ auth: process.env.TARGET_TOKEN });
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SRC_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          # 1. PrivateリポジトリへIssueを作成
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer $TARGET_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/aiinside-support/cs-dev-support/issues \
+            -d "$(jq -n --arg title "$ISSUE_TITLE" --arg body "$ISSUE_BODY" '{title: $title, body: $body, labels: ["status: 新規"]}')")
 
-            const srcIssue = context.payload.issue;
-            const owner = 'aiinside-support';
-            const targetRepo = 'cs-dev-support';
+          CREATED_NUM=$(echo "$RESPONSE" | jq -r '.number')
+          echo "Created issue number: $CREATED_NUM"
 
-            // 1. Privateリポジトリ（cs-dev-support）にIssueを作成
-            const created = await targetOctokit.rest.issues.create({
-              owner,
-              repo: targetRepo,
-              title: srcIssue.title,
-              body: srcIssue.body || '',
-              labels: ['status: 新規']
-            });
+          if [ "$CREATED_NUM" = "null" ] || [ -z "$CREATED_NUM" ]; then
+            echo "Error response: $RESPONSE"
+            exit 1
+          fi
 
-            // 2. Public側（cs-dev-support-relay）の内容を即時消去してClose
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: srcIssue.number,
-              title: `Relayed #${created.data.number}`,
-              body: 'Transferred to private repository.',
-              state: 'closed'
-            });
+          # 2. Public側の内容を消去してClose
+          curl -s -X PATCH \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$SRC_REPO/issues/$ISSUE_NUMBER" \
+            -d "$(jq -n --arg title "Relayed #$CREATED_NUM" '{title: $title, body: "Transferred to private repository.", state: "closed"}')"
