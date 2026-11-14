@@ -21,10 +21,10 @@ jobs:
             const targetOctokit = new Octokit({ auth: process.env.TARGET_TOKEN });
 
             const srcIssue = context.payload.issue;
-            const owner = 'aii-arakidaisuke';
+            const owner = 'aiinside-support';
             const targetRepo = 'cs-dev-support';
 
-            // 1. Privateリポジトリに同じタイトル・本文・ラベルでIssueを作成
+            // 1. Privateリポジトリ（cs-dev-support）にIssueを作成
             const created = await targetOctokit.rest.issues.create({
               owner,
               repo: targetRepo,
@@ -33,7 +33,7 @@ jobs:
               labels: ['status: 新規']
             });
 
-            // 2. セキュリティ保護のためPublic側の内容を即時消去してClose
+            // 2. Public側（cs-dev-support-relay）の内容を即時消去してClose
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
