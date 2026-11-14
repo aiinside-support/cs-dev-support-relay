@@ -20,24 +20,26 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
+          # === 以降（thread_id行）を除いた綺麗な本文を抽出
+          CLEAN_BODY=$(echo "$ISSUE_BODY" | sed '/^===$/,$d')
+
           # 1. PrivateリポジトリへIssueを作成
           RESPONSE=$(curl -s -X POST \
             -H "Authorization: Bearer $TARGET_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/aiinside-support/cs-dev-support/issues \
-            -d "$(jq -n --arg title "$ISSUE_TITLE" --arg body "$ISSUE_BODY" '{title: $title, body: $body, labels: ["status: 新規"]}')")
+            -d "$(jq -n --arg title "$ISSUE_TITLE" --arg body "$CLEAN_BODY" '{title: $title, body: $body, labels: ["status: 新規"]}')")
 
           CREATED_NUM=$(echo "$RESPONSE" | jq -r '.number')
-          echo "Created issue number: $CREATED_NUM"
-
           if [ "$CREATED_NUM" = "null" ] || [ -z "$CREATED_NUM" ]; then
             echo "Error response: $RESPONSE"
             exit 1
           fi
 
-          # 2. Public側の内容を消去してClose
+          # 2. Public側のタイトルに「本物の番号」を記録し、thread_idだけ残してClose
+          THREAD_ID=$(echo "$ISSUE_BODY" | grep '^thread_id:' | cut -d':' -f2-)
           curl -s -X PATCH \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$SRC_REPO/issues/$ISSUE_NUMBER" \
-            -d "$(jq -n --arg title "Relayed #$CREATED_NUM" '{title: $title, body: "Transferred to private repository.", state: "closed"}')"
+            -d "$(jq -n --arg title "Relayed #$CREATED_NUM" --arg body "thread_id:$THREAD_ID" '{title: $title, body: $body, state: "closed"}')"
