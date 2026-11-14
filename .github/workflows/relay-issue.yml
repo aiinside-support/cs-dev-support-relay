@@ -43,7 +43,45 @@ jobs:
             exit 0
           fi
 
-          # パターンB：通常の新規Issue転送（従来通り）
+          # パターンB：スレッド返信（追記・ステータス変更・クローズ）の場合
+          if [[ "$ISSUE_TITLE" == "[REPLY_REQUEST]"* ]]; then
+            TARGET_NUM=$(echo "$ISSUE_TITLE" | sed 's/\[REPLY_REQUEST\] //')
+            ACTION_TYPE=$(echo "$ISSUE_BODY" | grep '^action:' | cut -d':' -f2-)
+            COMMENT_BODY=$(echo "$ISSUE_BODY" | sed '1,/^===$/d')
+
+            # 1. コメントをPrivate側のIssueに追記
+            curl -s -X POST \
+              -H "Authorization: Bearer $TARGET_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM/comments" \
+              -d "$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
+
+            # 2. アクション種別に応じた処理（close / status変更）
+            if [ "$ACTION_TYPE" = "close" ]; then
+              curl -s -X PATCH \
+                -H "Authorization: Bearer $TARGET_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM" \
+                -d '{"state": "closed"}'
+            elif [[ "$ACTION_TYPE" == status:* ]]; then
+              NEW_LABEL=$(echo "$ACTION_TYPE" | sed 's/^status:[[:space:]]*//')
+              curl -s -X PUT \
+                -H "Authorization: Bearer $TARGET_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM/labels" \
+                -d "$(jq -n --arg label "status: $NEW_LABEL" '{labels: [$label]}')"
+            fi
+
+            # 3. 中継リポジトリのIssueをクローズ
+            curl -s -X PATCH \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$SRC_REPO/issues/$ISSUE_NUMBER" \
+              -d "$(jq -n --arg title "Replied #$TARGET_NUM" '{title: $title, state: "closed"}')"
+            exit 0
+          fi
+
+          # パターンC：通常の新規Issue転送（従来通り）
           CLEAN_BODY=$(echo "$ISSUE_BODY" | sed '/^===$/,$d')
 
           RESPONSE=$(curl -s -X POST \
