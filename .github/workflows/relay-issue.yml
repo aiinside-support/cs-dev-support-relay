@@ -20,7 +20,7 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          # パターンA：一覧取得リクエストの場合
+          # パターンA：一覧取得リクエストの場合（現在のラベルも一緒に表示）
           if [ "$ISSUE_TITLE" = "[LIST_REQUEST]" ]; then
             ISSUES_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
               -H "Accept: application/vnd.github+json" \
@@ -43,7 +43,41 @@ jobs:
             exit 0
           fi
 
-          # パターンB：スレッド返信（追記・ステータス変更・クローズ）の場合
+          # パターンA2：詳細取得リクエスト（ラベル・本文・コメント履歴の取得）
+          if [[ "$ISSUE_TITLE" == "[DETAIL_REQUEST]"* ]]; then
+            TARGET_NUM=$(echo "$ISSUE_TITLE" | sed 's/\[DETAIL_REQUEST\] //')
+            ISSUE_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM")
+
+            if [ "$(echo "$ISSUE_JSON" | jq -r '.message // empty')" = "Not Found" ]; then
+              DETAIL_TEXT="Issue #$TARGET_NUM は見つかりませんでした。"
+            else
+              COMMENTS_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM/comments")
+
+              DETAIL_TEXT=$(jq -n --argjson issue "$ISSUE_JSON" --argjson comments "$COMMENTS_JSON" '
+                "■ #" + ($issue.number|tostring) + " " + $issue.title + "\n" +
+                "状態: " + $issue.state + " / ラベル: [" + ([$issue.labels[].name] | join(", ")) + "]\n" +
+                "--------------------\n" +
+                ($issue.body // "") + "\n" +
+                "--------------------\n" +
+                (if ($comments | length) == 0 then "（コメントはまだありません）"
+                 else ($comments | map("【" + .user.login + "】\n" + .body) | join("\n\n"))
+                 end)
+              ')
+            fi
+
+            curl -s -X PATCH \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$SRC_REPO/issues/$ISSUE_NUMBER" \
+              -d "$(jq -n --arg body "$DETAIL_TEXT" '{title: "Detail Completed", body: $body, state: "closed"}')"
+            exit 0
+          fi
+
+          # パターンB：スレッド返信（追記・クローズ）の場合
           if [[ "$ISSUE_TITLE" == "[REPLY_REQUEST]"* ]]; then
             TARGET_NUM=$(echo "$ISSUE_TITLE" | sed 's/\[REPLY_REQUEST\] //')
             ACTION_TYPE=$(echo "$ISSUE_BODY" | grep '^action:' | cut -d':' -f2-)
@@ -56,20 +90,13 @@ jobs:
               "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM/comments" \
               -d "$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
 
-            # 2. アクション種別に応じた処理（close / status変更）
+            # 2. 「完了」の場合のみクローズ
             if [ "$ACTION_TYPE" = "close" ]; then
               curl -s -X PATCH \
                 -H "Authorization: Bearer $TARGET_TOKEN" \
                 -H "Accept: application/vnd.github+json" \
                 "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM" \
                 -d '{"state": "closed"}'
-            elif [[ "$ACTION_TYPE" == status:* ]]; then
-              NEW_LABEL=$(echo "$ACTION_TYPE" | sed 's/^status:[[:space:]]*//')
-              curl -s -X PUT \
-                -H "Authorization: Bearer $TARGET_TOKEN" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM/labels" \
-                -d "$(jq -n --arg label "status: $NEW_LABEL" '{labels: [$label]}')"
             fi
 
             # 3. 中継リポジトリのIssueをクローズ
@@ -81,7 +108,7 @@ jobs:
             exit 0
           fi
 
-          # パターンC：通常の新規Issue転送（従来通り）
+          # パターンC：通常の新規Issue転送
           CLEAN_BODY=$(echo "$ISSUE_BODY" | sed '/^===$/,$d')
 
           RESPONSE=$(curl -s -X POST \
