@@ -20,7 +20,7 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          # パターンA：一覧取得リクエストの場合（現在のラベルも一緒に表示）
+          # パターンA：一覧取得リクエスト（@一覧取得）
           if [ "$ISSUE_TITLE" = "[LIST_REQUEST]" ]; then
             ISSUES_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
               -H "Accept: application/vnd.github+json" \
@@ -43,7 +43,7 @@ jobs:
             exit 0
           fi
 
-          # パターンA2：詳細取得リクエスト（ラベル・本文・コメント履歴の取得）
+          # パターンA2：詳細取得リクエスト（@詳細）
           if [[ "$ISSUE_TITLE" == "[DETAIL_REQUEST]"* ]]; then
             TARGET_NUM=$(echo "$ISSUE_TITLE" | sed 's/\[DETAIL_REQUEST\] //')
             ISSUE_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
@@ -77,7 +77,7 @@ jobs:
             exit 0
           fi
 
-          # パターンB：スレッド返信（追記・クローズ）の場合
+          # パターンB：スレッド返信（@追加質問 / @完了）
           if [[ "$ISSUE_TITLE" == "[REPLY_REQUEST]"* ]]; then
             TARGET_NUM=$(echo "$ISSUE_TITLE" | sed 's/\[REPLY_REQUEST\] //')
             ACTION_TYPE=$(echo "$ISSUE_BODY" | grep '^action:' | cut -d':' -f2-)
@@ -90,8 +90,14 @@ jobs:
               "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM/comments" \
               -d "$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
 
-            # 2. 「完了」の場合のみクローズ
+            # 2. @完了 の場合はラベルを「status: 完了」にしてクローズ
             if [ "$ACTION_TYPE" = "close" ]; then
+              curl -s -X PUT \
+                -H "Authorization: Bearer $TARGET_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM/labels" \
+                -d '{"labels": ["status: 完了"]}'
+
               curl -s -X PATCH \
                 -H "Authorization: Bearer $TARGET_TOKEN" \
                 -H "Accept: application/vnd.github+json" \
