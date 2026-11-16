@@ -20,20 +20,41 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          # パターンA：一覧取得リクエスト（@一覧取得）
+          # パターンA：一覧取得リクエスト（Open と 完了済みを取得・起票者付き）
           if [ "$ISSUE_TITLE" = "[LIST_REQUEST]" ]; then
-            ISSUES_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
+            OPEN_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/aiinside-support/cs-dev-support/issues?state=open&per_page=30")
 
-            LIST_TEXT=$(echo "$ISSUES_JSON" | jq -r '
+            CLOSED_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues?state=closed&per_page=10")
+
+            OPEN_TEXT=$(echo "$OPEN_JSON" | jq -r '
               [.[] | select(.pull_request == null)] |
               if length == 0 then
-                "現在対応中のIssueはありません。"
+                "（対応中のIssueはありません）"
               else
-                map("・#" + (.number|tostring) + " [" + ([.labels[].name] | join(", ")) + "] " + .title) | join("\n")
+                map(
+                  ((.body // "") | split("\n") | map(select(startswith("起票者："))) | .[0] // "" | sub("^起票者：\\s*"; "")) as $author |
+                  "・#" + (.number|tostring) + " [" + ([.labels[].name] | join(", ")) + "] " + .title + (if $author != "" then "（" + $author + "）" else "" end)
+                ) | join("\n")
               end
             ')
+
+            CLOSED_TEXT=$(echo "$CLOSED_JSON" | jq -r '
+              [.[] | select(.pull_request == null)] |
+              if length == 0 then
+                "（完了済みのIssueはありません）"
+              else
+                map(
+                  ((.body // "") | split("\n") | map(select(startswith("起票者："))) | .[0] // "" | sub("^起票者：\\s*"; "")) as $author |
+                  "・#" + (.number|tostring) + " [" + ([.labels[].name] | join(", ")) + "] " + .title + (if $author != "" then "（" + $author + "）" else "" end)
+                ) | join("\n")
+              end
+            ')
+
+            LIST_TEXT="【対応中（Open）】\n${OPEN_TEXT}\n\n【完了（直近10件）】\n${CLOSED_TEXT}"
 
             curl -s -X PATCH \
               -H "Authorization: Bearer $GH_TOKEN" \
