@@ -40,6 +40,19 @@ jobs:
                   raw = resp.read().decode("utf-8")
                   return json.loads(raw) if raw else {}
 
+          def extract_author_and_body(raw_body):
+              author = "不明"
+              q_lines = []
+              for ln in (raw_body or "").splitlines():
+                  clean_ln = ln.replace("**", "").strip()
+                  m = re.match(r"^起票者[:：]\s*(.+)$", clean_ln)
+                  if m and author == "不明":
+                      author = m.group(1).strip()
+                  else:
+                      q_lines.append(ln)
+              q_body = "\n".join(q_lines).strip() or "（記載なし）"
+              return author, q_body
+
           m = re.search(r"(\d+)", title)
           issue_num = m.group(1) if m else ""
 
@@ -57,9 +70,7 @@ jobs:
                   it_title = it.get("title", "")
                   labels = [re.sub(r"^status:\s*", "", lb["name"]) for lb in it.get("labels", [])]
                   status_str = " / ".join(labels) if labels else "未設定"
-                  it_body = it.get("body") or ""
-                  am = re.search(r"^起票者：\s*(.+)$", it_body, re.M)
-                  author = am.group(1).strip() if am else "不明"
+                  author, _ = extract_author_and_body(it.get("body") or "")
                   lines.append(f"・#{num} [{status_str}] {it_title}（起票者：{author}）")
               list_text = "\n".join(lines) if lines else "現在対応中（Open）のIssueはありません。"
               reply_text = f"【対応中のIssue一覧】\n{list_text}"
@@ -67,13 +78,9 @@ jobs:
           elif "[DETAIL_REQUEST]" in combined or "Issue詳細" in combined:
               it = gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}", target_token)
               it_title = it.get("title", "（タイトルなし）")
-              it_body = it.get("body") or ""
               labels = [re.sub(r"^status:\s*", "", lb["name"]) for lb in it.get("labels", [])]
               status_str = " / ".join(labels) if labels else "未設定"
-              am = re.search(r"^起票者：\s*(.+)$", it_body, re.M)
-              author = am.group(1).strip() if am else "不明"
-              q_lines = [ln for ln in it_body.splitlines() if not ln.startswith("起票者：")]
-              q_body = "\n".join(q_lines).strip() or "（記載なし）"
+              author, q_body = extract_author_and_body(it.get("body") or "")
 
               comments = gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}/comments", target_token)
               if not comments:
@@ -101,7 +108,6 @@ jobs:
               gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}/comments", target_token, "POST", {"body": clean_comment})
               reply_text = f"管理番号：#{issue_num} にコメントを追記しました。"
 
-          # 中継Issue自体の本文（body）を返信テキストに書き換えてクローズ
           gh_api(
               f"https://api.github.com/repos/{relay_repo}/issues/{relay_num}",
               relay_token,
