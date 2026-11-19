@@ -53,7 +53,8 @@ jobs:
               q_body = "\n".join(q_lines).strip() or "（記載なし）"
               return author, q_body
 
-          m = re.search(r"(\d+)", title)
+          # タイトルからIssue番号を抽出。見つからない場合は本文の「#番号」から抽出
+          m = re.search(r"(\d+)", title) or re.search(r"#(\d+)", body)
           issue_num = m.group(1) if m else ""
 
           parts = body.split("===\n", 1)
@@ -74,6 +75,9 @@ jobs:
                   lines.append(f"・#{num} [{status_str}] {it_title}（起票者：{author}）")
               list_text = "\n".join(lines) if lines else "現在対応中（Open）のIssueはありません。"
               reply_text = f"【対応中のIssue一覧】\n{list_text}"
+
+          elif not issue_num:
+              reply_text = f"管理番号（Issue番号）を特定できませんでした。（受信タイトル: {title}）"
 
           elif "[DETAIL_REQUEST]" in combined or "Issue詳細" in combined:
               it = gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}", target_token)
