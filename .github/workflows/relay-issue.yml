@@ -1,5 +1,59 @@
-elif [[ "$COMMAND" == *"Issue詳細"* ]]; then
-            # 対象 Issue の詳細を取得
+name: Relay CS Commands to Private Repo
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  process-command:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Process Teams command and reply via relay issue
+        env:
+          RELAY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+          RELAY_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RELAY_TITLE: ${{ github.event.issue.title }}
+          RELAY_BODY: ${{ github.event.issue.body }}
+        run: |
+          # タイトルから対象Issue番号（管理番号）を抽出（例: "#20" や "20"）
+          ISSUE_NUM=$(echo "$RELAY_TITLE" | grep -oE '[0-9]+' | head -n1)
+
+          # 本文の1行目（アクション種別）と「===」以降の本文を抽出
+          ACTION_LINE=$(echo "$RELAY_BODY" | head -n1 | tr -d '\r')
+          CONTENT=$(echo "$RELAY_BODY" \vert{} sed '1,/^===$/d')
+
+          REPLY_TEXT=""
+
+          # ==========================================
+          # 1. @Issue一覧（Open中のIssueのみ一覧表示）
+          # ==========================================
+          if [[ "$RELAY_BODY" == *"Issue一覧"* ]] \vert{}\vert{} [[ "$RELAY_TITLE" == *"Issue一覧"* ]]; then
+            ISSUES_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues?state=open&per_page=50")
+
+            LIST_TEXT=$(echo "$ISSUES_JSON" | jq -r '
+              [.[] | select(.pull_request == null)] |
+              if length == 0 then
+                "現在対応中（Open）のIssueはありません。"
+              else
+                map(
+                  (.number | tostring) as $num |
+                  .title as $title |
+                  (([.labels[].name | sub("^status:[[:space:]]*"; "")] | join(" / ")) | if . == "" then "未設定" else . end) as $status |
+                  ((.body // "" | split("\n") | map(select(startswith("起票者："))) | .[0] // "起票者：不明") | sub("^起票者：[[:space:]]*"; "")) as $author |
+                  "・#" + $num + " [" + $status + "] " + $title + "（起票者：" + $author + "）"
+                ) | join("\n")
+              end
+            ')
+
+            REPLY_TEXT=$(printf "【対応中のIssue一覧】\n\%s" "$LIST_TEXT")
+
+          # ==========================================
+          # 2. @Issue詳細（スッキリ版フォーマット）
+          # ==========================================
+          elif [[ "$RELAY_BODY" == *"Issue詳細"* ]] \vert{}\vert{} [[ "$RELAY_TITLE" == *"Issue詳細"* ]]; then
             ISSUE_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$ISSUE_NUM")
@@ -7,19 +61,15 @@ elif [[ "$COMMAND" == *"Issue詳細"* ]]; then
             TITLE=$(echo "$ISSUE_JSON" | jq -r '.title // "（タイトルなし）"')
             BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
 
-            # ラベル一覧から「status: 」を除いて「 / 」区切りで整形（なければ「未設定」）
             LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name | sub("^status:[[:space:]]*"; "")] | join(" / ")')
             [ -z "$LABELS" ] && LABELS="未設定"
 
-            # 本文から「起票者：」を抽出
             AUTHOR=$(echo "$BODY" | grep -m1 '^起票者：' | sed 's/^起票者：[[:space:]]*//')
             [ -z "$AUTHOR" ] && AUTHOR="不明"
 
-            # 本文から起票者行を除いた純粋な質問内容を抽出
-            QUESTION_BODY=$(echo "$BODY" | grep -v '^起票者：' | sed '/./,$!d')
+            QUESTION_BODY=$(echo "$BODY" \vert{} grep -v '^起票者：' \vert{} sed '/./,$!d')
             [ -z "$QUESTION_BODY" ] && QUESTION_BODY="（記載なし）"
 
-            # コメント一覧を取得して整形
             COMMENTS_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$ISSUE_NUM/comments")
@@ -29,9 +79,3 @@ elif [[ "$COMMAND" == *"Issue詳細"* ]]; then
                 "（コメントはまだありません）"
               else
                 map("・" + .user.login + "：\n" + .body) | join("\n\n")
-              end
-            ')
-
-            # スッキリ版の返信テキストを組み立て
-            REPLY_TEXT=$(printf "■ #%s %s\nステータス：%s\n起票者：%s\n--------------------\n【質問内容】\n%s\n--------------------\n【コメント履歴】\n%s" \
-              "$ISSUE_NUM" "$TITLE" "$LABELS" "$AUTHOR" "$QUESTION_BODY" "$COMMENTS_TEXT")
