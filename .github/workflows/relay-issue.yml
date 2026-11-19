@@ -20,37 +20,75 @@ jobs:
           ISSUE_NUM=$(echo "$RELAY_TITLE" | grep -oE '[0-9]+' | head -n1)
 
           # 本文の1行目（アクション種別）と「===」以降の本文を抽出
-          ACTION_LINE=$(echo "$RELAY_BODY" | head -n1 | tr -d '\r')
           CONTENT=$(echo "$RELAY_BODY" \vert{} sed '1,/^===$/d')
+          COMBINED_TEXT="${RELAY_TITLE}${RELAY_BODY}"
 
           REPLY_TEXT=""
 
-          # ==========================================
-          # 1. @Issue一覧（Open中のIssueのみ一覧表示）
-          # ==========================================
-          if [[ "$RELAY_TITLE" == *"[LIST_REQUEST]"* || "$RELAY_BODY" == *"Issue一覧"* \vert{}\vert{} "$RELAY_TITLE" == *"Issue一覧"* ]]; then
-            ISSUES_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues?state=open&per_page=50")
+          case "$COMBINED_TEXT" in
+            *"[LIST_REQUEST]"*|*"Issue一覧"*)
+              ISSUES_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/aiinside-support/cs-dev-support/issues?state=open&per_page=50")
 
-            LIST_TEXT=$(echo "$ISSUES_JSON" | jq -r '
-              [.[] | select(.pull_request == null)] |
-              if length == 0 then
-                "現在対応中（Open）のIssueはありません。"
-              else
-                map(
-                  (.number | tostring) as $num |
-                  .title as $title |
-                  (([.labels[].name | sub("^status:[[:space:]]*"; "")] | join(" / ")) | if . == "" then "未設定" else . end) as $status |
-                  ((.body // "" | split("\n") | map(select(startswith("起票者："))) | .[0] // "起票者：不明") | sub("^起票者：[[:space:]]*"; "")) as $author |
-                  "・#" + $num + " [" + $status + "] " + $title + "（起票者：" + $author + "）"
-                ) | join("\n")
-              end
-            ')
+              LIST_TEXT=$(echo "$ISSUES_JSON" | jq -r '
+                [.[] | select(.pull_request == null)] |
+                if length == 0 then
+                  "現在対応中（Open）のIssueはありません。"
+                else
+                  map(
+                    (.number | tostring) as $num |
+                    .title as $title |
+                    (([.labels[].name | sub("^status:[[:space:]]*"; "")] | join(" / ")) | if . == "" then "未設定" else . end) as $status |
+                    ((.body // "" | split("\n") | map(select(startswith("起票者："))) | .[0] // "起票者：不明") | sub("^起票者：[[:space:]]*"; "")) as $author |
+                    "・#" + $num + " [" + $status + "] " + $title + "（起票者：" + $author + "）"
+                  ) | join("\n")
+                end
+              ')
 
-            REPLY_TEXT=$(printf "【対応中のIssue一覧】\n\%s" "$LIST_TEXT")
+              REPLY_TEXT=$(printf "【対応中のIssue一覧】\n\%s" "$LIST_TEXT")
+              ;;
 
-          # ==========================================
-          # 2. @Issue詳細（スッキリ版フォーマット）
-          # ==========================================
-          elif [[ "$RELAY_TITLE" == *"[DETAIL_REQUEST]"* \vert{}\vert{} "$RELAY_
+            *"[DETAIL_REQUEST]"*|*"Issue詳細"*)
+              ISSUE_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$ISSUE_NUM")
+
+              TITLE=$(echo "$ISSUE_JSON" | jq -r '.title // "（タイトルなし）"')
+              BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
+
+              LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name | sub("^status:[[:space:]]*"; "")] | join(" / ")')
+              [ -z "$LABELS" ] && LABELS="未設定"
+
+              AUTHOR=$(echo "$BODY" | grep -m1 '^起票者：' | sed 's/^起票者：[[:space:]]*//')
+              [ -z "$AUTHOR" ] && AUTHOR="不明"
+
+              QUESTION_BODY=$(echo "$BODY" \vert{} grep -v '^起票者：' \vert{} sed '/./,$!d')
+              [ -z "$QUESTION_BODY" ] && QUESTION_BODY="（記載なし）"
+
+              COMMENTS_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$ISSUE_NUM/comments")
+
+              COMMENTS_TEXT=$(echo "$COMMENTS_JSON" | jq -r '
+                if length == 0 then
+                  "（コメントはまだありません）"
+                else
+                  map("・" + .user.login + "：\n" + .body) | join("\n\n")
+                end
+              ')
+
+              REPLY_TEXT=$(printf "■ #%s %s\nステータス：%s\n起票者：%s\n--------------------\n【質問内容】\n%s\n--------------------\n【コメント履歴】\n%s" \
+                "$ISSUE_NUM" "$TITLE" "$LABELS" "$AUTHOR" "$QUESTION_BODY" "$COMMENTS_TEXT")
+              ;;
+
+            *"[CLOSE_REQUEST]"*|*"Issue完了"*)
+              curl -s -X POST \
+                -H "Authorization: Bearer $TARGET_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$ISSUE_NUM/comments" \
+                -d "$(jq -n --arg body "$CONTENT" '{body: ($body + "\n\n（CS側より完了操作が実行されました）")}')" > /dev/null
+
+              curl -s -X PATCH \
+                -H "Authorization: Bearer $TARGET_TOKEN" \
+                -H "Accept: application/vnd.github
