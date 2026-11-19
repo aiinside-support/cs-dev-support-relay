@@ -16,7 +16,7 @@ jobs:
           RELAY_TITLE: ${{ github.event.issue.title }}
           RELAY_BODY: ${{ github.event.issue.body }}
         run: |
-          # タイトルから対象Issue番号（管理番号）を抽出（例: "#20" や "20"）
+          # タイトルから対象Issue番号（管理番号）を抽出（例: "[DETAIL_REQUEST] 20" -> "20"）
           ISSUE_NUM=$(echo "$RELAY_TITLE" | grep -oE '[0-9]+' | head -n1)
 
           # 本文の1行目（アクション種別）と「===」以降の本文を抽出
@@ -28,7 +28,7 @@ jobs:
           # ==========================================
           # 1. @Issue一覧（Open中のIssueのみ一覧表示）
           # ==========================================
-          if [[ "$RELAY_BODY" == *"Issue一覧"* ]] \vert{}\vert{} [[ "$RELAY_TITLE" == *"Issue一覧"* ]]; then
+          if [[ "$RELAY_TITLE" == *"[LIST_REQUEST]"* || "$RELAY_BODY" == *"Issue一覧"* \vert{}\vert{} "$RELAY_TITLE" == *"Issue一覧"* ]]; then
             ISSUES_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/aiinside-support/cs-dev-support/issues?state=open&per_page=50")
@@ -53,29 +53,4 @@ jobs:
           # ==========================================
           # 2. @Issue詳細（スッキリ版フォーマット）
           # ==========================================
-          elif [[ "$RELAY_BODY" == *"Issue詳細"* ]] \vert{}\vert{} [[ "$RELAY_TITLE" == *"Issue詳細"* ]]; then
-            ISSUE_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$ISSUE_NUM")
-
-            TITLE=$(echo "$ISSUE_JSON" | jq -r '.title // "（タイトルなし）"')
-            BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
-
-            LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name | sub("^status:[[:space:]]*"; "")] | join(" / ")')
-            [ -z "$LABELS" ] && LABELS="未設定"
-
-            AUTHOR=$(echo "$BODY" | grep -m1 '^起票者：' | sed 's/^起票者：[[:space:]]*//')
-            [ -z "$AUTHOR" ] && AUTHOR="不明"
-
-            QUESTION_BODY=$(echo "$BODY" \vert{} grep -v '^起票者：' \vert{} sed '/./,$!d')
-            [ -z "$QUESTION_BODY" ] && QUESTION_BODY="（記載なし）"
-
-            COMMENTS_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$ISSUE_NUM/comments")
-
-            COMMENTS_TEXT=$(echo "$COMMENTS_JSON" | jq -r '
-              if length == 0 then
-                "（コメントはまだありません）"
-              else
-                map("・" + .user.login + "：\n" + .body) | join("\n\n")
+          elif [[ "$RELAY_TITLE" == *"[DETAIL_REQUEST]"* \vert{}\vert{} "$RELAY_
