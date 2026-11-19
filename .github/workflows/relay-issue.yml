@@ -8,7 +8,7 @@ jobs:
   process-command:
     runs-on: ubuntu-latest
     steps:
-      - name: Process Teams command and reply via relay issue
+      - name: Process Teams command and update relay issue body
         env:
           RELAY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
@@ -101,6 +101,11 @@ jobs:
               gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}/comments", target_token, "POST", {"body": clean_comment})
               reply_text = f"管理番号：#{issue_num} にコメントを追記しました。"
 
-          gh_api(f"https://api.github.com/repos/{relay_repo}/issues/{relay_num}/comments", relay_token, "POST", {"body": reply_text})
-          gh_api(f"https://api.github.com/repos/{relay_repo}/issues/{relay_num}", relay_token, "PATCH", {"state": "closed"})
+          # 中継Issue自体の本文（body）を返信テキストに書き換えてクローズ
+          gh_api(
+              f"https://api.github.com/repos/{relay_repo}/issues/{relay_num}",
+              relay_token,
+              "PATCH",
+              {"body": reply_text, "state": "closed"}
+          )
           EOF
