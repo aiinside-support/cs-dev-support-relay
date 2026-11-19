@@ -1,143 +1,37 @@
-name: Relay Issue to Private Repo
-
-on:
-  issues:
-    types: [opened]
-
-permissions:
-  issues: write
-
-jobs:
-  relay:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Process Relay Request
-        env:
-          TARGET_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SRC_REPO: ${{ github.repository }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
-          ISSUE_BODY: ${{ github.event.issue.body }}
-        run: |
-          # パターンA：一覧取得リクエスト（Open と 完了済みを取得・起票者付き）
-          # パターンA：一覧取得リクエスト（対応中 Open のみ取得・起票者付き）
-          if [ "$ISSUE_TITLE" = "[LIST_REQUEST]" ]; then
-            OPEN_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
+elif [[ "$COMMAND" == *"Issue詳細"* ]]; then
+            # 対象 Issue の詳細を取得
+            ISSUE_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
               -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues?state=open&per_page=30")
+              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$ISSUE_NUM")
 
-            OPEN_TEXT=$(echo "$OPEN_JSON" | jq -r '
-              [.[] | select(.pull_request == null)] |
+            TITLE=$(echo "$ISSUE_JSON" | jq -r '.title // "（タイトルなし）"')
+            BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
+
+            # ラベル一覧から「status: 」を除いて「 / 」区切りで整形（なければ「未設定」）
+            LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name | sub("^status:[[:space:]]*"; "")] | join(" / ")')
+            [ -z "$LABELS" ] && LABELS="未設定"
+
+            # 本文から「起票者：」を抽出
+            AUTHOR=$(echo "$BODY" | grep -m1 '^起票者：' | sed 's/^起票者：[[:space:]]*//')
+            [ -z "$AUTHOR" ] && AUTHOR="不明"
+
+            # 本文から起票者行を除いた純粋な質問内容を抽出
+            QUESTION_BODY=$(echo "$BODY" | grep -v '^起票者：' | sed '/./,$!d')
+            [ -z "$QUESTION_BODY" ] && QUESTION_BODY="（記載なし）"
+
+            # コメント一覧を取得して整形
+            COMMENTS_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$ISSUE_NUM/comments")
+
+            COMMENTS_TEXT=$(echo "$COMMENTS_JSON" | jq -r '
               if length == 0 then
-                "現在対応中のIssueはありません。"
+                "（コメントはまだありません）"
               else
-                map(
-                  ((.body // "") | split("\n") | map(select(startswith("起票者："))) | .[0] // "" | sub("^起票者：\\s*"; "")) as $author |
-                  "・#" + (.number|tostring) + " [" + ([.labels[].name] | join(", ")) + "] " + .title + (if $author != "" then "（" + $author + "）" else "" end)
-                ) | join("\n")
+                map("・" + .user.login + "：\n" + .body) | join("\n\n")
               end
             ')
 
-            LIST_TEXT="【対応中（Open）一覧】\n${OPEN_TEXT}"
-
-            curl -s -X PATCH \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/$SRC_REPO/issues/$ISSUE_NUMBER" \
-              -d "$(jq -n --arg body "$LIST_TEXT" '{title: "List Completed", body: $body, state: "closed"}')"
-            exit 0
-          fi
-
-          # パターンA2：詳細取得リクエスト（@詳細）
-          if [[ "$ISSUE_TITLE" == "[DETAIL_REQUEST]"* ]]; then
-            TARGET_NUM=$(echo "$ISSUE_TITLE" | sed 's/\[DETAIL_REQUEST\] //')
-            ISSUE_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM")
-
-            if [ "$(echo "$ISSUE_JSON" | jq -r '.message // empty')" = "Not Found" ]; then
-              DETAIL_TEXT="Issue #$TARGET_NUM は見つかりませんでした。"
-            else
-              COMMENTS_JSON=$(curl -s -H "Authorization: Bearer $TARGET_TOKEN" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM/comments")
-
-              DETAIL_TEXT=$(jq -n --argjson issue "$ISSUE_JSON" --argjson comments "$COMMENTS_JSON" '
-                "■ #" + ($issue.number|tostring) + " " + $issue.title + "\n" +
-                "状態: " + $issue.state + " / ラベル: [" + ([$issue.labels[].name] | join(", ")) + "]\n" +
-                "--------------------\n" +
-                ($issue.body // "") + "\n" +
-                "--------------------\n" +
-                (if ($comments | length) == 0 then "（コメントはまだありません）"
-                 else ($comments | map("【" + .user.login + "】\n" + .body) | join("\n\n"))
-                 end)
-              ')
-            fi
-
-            curl -s -X PATCH \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/$SRC_REPO/issues/$ISSUE_NUMBER" \
-              -d "$(jq -n --arg body "$DETAIL_TEXT" '{title: "Detail Completed", body: $body, state: "closed"}')"
-            exit 0
-          fi
-
-          # パターンB：スレッド返信（@追加質問 / @完了）
-          if [[ "$ISSUE_TITLE" == "[REPLY_REQUEST]"* ]]; then
-            TARGET_NUM=$(echo "$ISSUE_TITLE" | sed 's/\[REPLY_REQUEST\] //')
-            ACTION_TYPE=$(echo "$ISSUE_BODY" | grep '^action:' | cut -d':' -f2-)
-            COMMENT_BODY=$(echo "$ISSUE_BODY" | sed '1,/^===$/d')
-
-            # 1. コメントをPrivate側のIssueに追記
-            curl -s -X POST \
-              -H "Authorization: Bearer $TARGET_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM/comments" \
-              -d "$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
-
-            # 2. @完了 の場合はラベルを「status: 完了」にしてクローズ
-            if [ "$ACTION_TYPE" = "close" ]; then
-              curl -s -X PUT \
-                -H "Authorization: Bearer $TARGET_TOKEN" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM/labels" \
-                -d '{"labels": ["status: 完了"]}'
-
-              curl -s -X PATCH \
-                -H "Authorization: Bearer $TARGET_TOKEN" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/aiinside-support/cs-dev-support/issues/$TARGET_NUM" \
-                -d '{"state": "closed"}'
-            fi
-
-            # 3. 中継リポジトリのIssueをクローズ
-            curl -s -X PATCH \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/$SRC_REPO/issues/$ISSUE_NUMBER" \
-              -d "$(jq -n --arg title "Replied #$TARGET_NUM" '{title: $title, state: "closed"}')"
-            exit 0
-          fi
-
-          # パターンC：通常の新規Issue転送
-          CLEAN_BODY=$(echo "$ISSUE_BODY" | sed '/^===$/,$d')
-
-          RESPONSE=$(curl -s -X POST \
-            -H "Authorization: Bearer $TARGET_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/aiinside-support/cs-dev-support/issues \
-            -d "$(jq -n --arg title "$ISSUE_TITLE" --arg body "$CLEAN_BODY" '{title: $title, body: $body, labels: ["status: 新規"]}')")
-
-          CREATED_NUM=$(echo "$RESPONSE" | jq -r '.number')
-          if [ "$CREATED_NUM" = "null" ] || [ -z "$CREATED_NUM" ]; then
-            echo "Error response: $RESPONSE"
-            exit 1
-          fi
-
-          THREAD_ID=$(echo "$ISSUE_BODY" | grep '^thread_id:' | cut -d':' -f2-)
-          curl -s -X PATCH \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$SRC_REPO/issues/$ISSUE_NUMBER" \
-            -d "$(jq -n --arg title "Relayed #$CREATED_NUM" --arg body "thread_id:$THREAD_ID" '{title: $title, body: $body, state: "closed"}')"
+            # スッキリ版の返信テキストを組み立て
+            REPLY_TEXT=$(printf "■ #%s %s\nステータス：%s\n起票者：%s\n--------------------\n【質問内容】\n%s\n--------------------\n【コメント履歴】\n%s" \
+              "$ISSUE_NUM" "$TITLE" "$LABELS" "$AUTHOR" "$QUESTION_BODY" "$COMMENTS_TEXT")
