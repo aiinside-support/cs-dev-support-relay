@@ -16,90 +16,91 @@ jobs:
           RELAY_ISSUE_NUMBER: ${{ github.event.issue.number }}
           RELAY_TITLE: ${{ github.event.issue.title }}
           RELAY_BODY: ${{ github.event.issue.body }}
-        run: python3 -c '
-import os, re, json, urllib.request
+        run: |
+          python3 - << 'EOF'
+          import os, re, json, urllib.request
 
-relay_token = os.environ["RELAY_TOKEN"]
-target_token = os.environ["TARGET_TOKEN"]
-relay_repo = os.environ["RELAY_REPO"]
-relay_num = os.environ["RELAY_ISSUE_NUMBER"]
-title = os.environ.get("RELAY_TITLE", "")
-body = os.environ.get("RELAY_BODY", "")
-target_repo = "aiinside-support/cs-dev-support"
+          relay_token = os.environ["RELAY_TOKEN"]
+          target_token = os.environ["TARGET_TOKEN"]
+          relay_repo = os.environ["RELAY_REPO"]
+          relay_num = os.environ["RELAY_ISSUE_NUMBER"]
+          title = os.environ.get("RELAY_TITLE", "")
+          body = os.environ.get("RELAY_BODY", "")
+          target_repo = "aiinside-support/cs-dev-support"
 
-def gh_api(url, token, method="GET", data=None):
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "gh-actions-relay"
-    }
-    body_bytes = json.dumps(data).encode("utf-8") if data is not None else None
-    req = urllib.request.Request(url, data=body_bytes, headers=headers, method=method)
-    with urllib.request.urlopen(req) as resp:
-        raw = resp.read().decode("utf-8")
-        return json.loads(raw) if raw else {}
+          def gh_api(url, token, method="GET", data=None):
+              headers = {
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "gh-actions-relay"
+              }
+              body_bytes = json.dumps(data).encode("utf-8") if data is not None else None
+              req = urllib.request.Request(url, data=body_bytes, headers=headers, method=method)
+              with urllib.request.urlopen(req) as resp:
+                  raw = resp.read().decode("utf-8")
+                  return json.loads(raw) if raw else {}
 
-m = re.search(r"(\d+)", title)
-issue_num = m.group(1) if m else ""
+          m = re.search(r"(\d+)", title)
+          issue_num = m.group(1) if m else ""
 
-parts = body.split("===\n", 1)
-content = parts[1].strip() if len(parts) > 1 else body.strip()
-combined = f"{title} {body}"
+          parts = body.split("===\n", 1)
+          content = parts[1].strip() if len(parts) > 1 else body.strip()
+          combined = f"{title} {body}"
 
-if "[LIST_REQUEST]" in combined or "Issue一覧" in combined:
-    issues = gh_api(f"https://api.github.com/repos/{target_repo}/issues?state=open&per_page=50", target_token)
-    lines = []
-    for it in issues:
-        if "pull_request" in it:
-            continue
-        num = it["number"]
-        it_title = it.get("title", "")
-        labels = [re.sub(r"^status:\s*", "", lb["name"]) for lb in it.get("labels", [])]
-        status_str = " / ".join(labels) if labels else "未設定"
-        it_body = it.get("body") or ""
-        am = re.search(r"^起票者：\s*(.+)$", it_body, re.M)
-        author = am.group(1).strip() if am else "不明"
-        lines.append(f"・#{num} [{status_str}] {it_title}（起票者：{author}）")
-    list_text = "\n".join(lines) if lines else "現在対応中（Open）のIssueはありません。"
-    reply_text = f"【対応中のIssue一覧】\n{list_text}"
+          if "[LIST_REQUEST]" in combined or "Issue一覧" in combined:
+              issues = gh_api(f"https://api.github.com/repos/{target_repo}/issues?state=open&per_page=50", target_token)
+              lines = []
+              for it in issues:
+                  if "pull_request" in it:
+                      continue
+                  num = it["number"]
+                  it_title = it.get("title", "")
+                  labels = [re.sub(r"^status:\s*", "", lb["name"]) for lb in it.get("labels", [])]
+                  status_str = " / ".join(labels) if labels else "未設定"
+                  it_body = it.get("body") or ""
+                  am = re.search(r"^起票者：\s*(.+)$", it_body, re.M)
+                  author = am.group(1).strip() if am else "不明"
+                  lines.append(f"・#{num} [{status_str}] {it_title}（起票者：{author}）")
+              list_text = "\n".join(lines) if lines else "現在対応中（Open）のIssueはありません。"
+              reply_text = f"【対応中のIssue一覧】\n{list_text}"
 
-elif "[DETAIL_REQUEST]" in combined or "Issue詳細" in combined:
-    it = gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}", target_token)
-    it_title = it.get("title", "（タイトルなし）")
-    it_body = it.get("body") or ""
-    labels = [re.sub(r"^status:\s*", "", lb["name"]) for lb in it.get("labels", [])]
-    status_str = " / ".join(labels) if labels else "未設定"
-    am = re.search(r"^起票者：\s*(.+)$", it_body, re.M)
-    author = am.group(1).strip() if am else "不明"
-    q_lines = [ln for ln in it_body.splitlines() if not ln.startswith("起票者：")]
-    q_body = "\n".join(q_lines).strip() or "（記載なし）"
+          elif "[DETAIL_REQUEST]" in combined or "Issue詳細" in combined:
+              it = gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}", target_token)
+              it_title = it.get("title", "（タイトルなし）")
+              it_body = it.get("body") or ""
+              labels = [re.sub(r"^status:\s*", "", lb["name"]) for lb in it.get("labels", [])]
+              status_str = " / ".join(labels) if labels else "未設定"
+              am = re.search(r"^起票者：\s*(.+)$", it_body, re.M)
+              author = am.group(1).strip() if am else "不明"
+              q_lines = [ln for ln in it_body.splitlines() if not ln.startswith("起票者：")]
+              q_body = "\n".join(q_lines).strip() or "（記載なし）"
 
-    comments = gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}/comments", target_token)
-    if not comments:
-        c_text = "（コメントはまだありません）"
-    else:
-        c_text = "\n\n".join([f"・{c[\"user\"][\"login\"]}：\n{c.get(\"body\", \"\")}" for c in comments])
+              comments = gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}/comments", target_token)
+              if not comments:
+                  c_text = "（コメントはまだありません）"
+              else:
+                  c_text = "\n\n".join([f"・{c['user']['login']}：\n{c.get('body', '')}" for c in comments])
 
-    reply_text = (
-        f"■ #{issue_num} {it_title}\n"
-        f"ステータス：{status_str}\n"
-        f"起票者：{author}\n"
-        f"--------------------\n"
-        f"【質問内容】\n{q_body}\n"
-        f"--------------------\n"
-        f"【コメント履歴】\n{c_text}"
-    )
+              reply_text = (
+                  f"■ #{issue_num} {it_title}\n"
+                  f"ステータス：{status_str}\n"
+                  f"起票者：{author}\n"
+                  f"--------------------\n"
+                  f"【質問内容】\n{q_body}\n"
+                  f"--------------------\n"
+                  f"【コメント履歴】\n{c_text}"
+              )
 
-elif "[CLOSE_REQUEST]" in combined or "Issue完了" in combined:
-    gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}/comments", target_token, "POST", {"body": f"{content}\n\n（CS側より完了操作が実行されました）"})
-    gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}", target_token, "PATCH", {"state": "closed", "labels": ["status: 完了"]})
-    reply_text = f"管理番号：#{issue_num} を完了（クローズ）にしました。"
+          elif "[CLOSE_REQUEST]" in combined or "Issue完了" in combined:
+              gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}/comments", target_token, "POST", {"body": f"{content}\n\n（CS側より完了操作が実行されました）"})
+              gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}", target_token, "PATCH", {"state": "closed", "labels": ["status: 完了"]})
+              reply_text = f"管理番号：#{issue_num} を完了（クローズ）にしました。"
 
-else:
-    clean_comment = re.sub(r"Issue追加質問\s*", "", content).strip()
-    gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}/comments", target_token, "POST", {"body": clean_comment})
-    reply_text = f"管理番号：#{issue_num} にコメントを追記しました。"
+          else:
+              clean_comment = re.sub(r"Issue追加質問\s*", "", content).strip()
+              gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}/comments", target_token, "POST", {"body": clean_comment})
+              reply_text = f"管理番号：#{issue_num} にコメントを追記しました。"
 
-gh_api(f"https://api.github.com/repos/{relay_repo}/issues/{relay_num}/comments", relay_token, "POST", {"body": reply_text})
-gh_api(f"https://api.github.com/repos/{relay_repo}/issues/{relay_num}", relay_token, "PATCH", {"state": "closed"})
-'
+          gh_api(f"https://api.github.com/repos/{relay_repo}/issues/{relay_num}/comments", relay_token, "POST", {"body": reply_text})
+          gh_api(f"https://api.github.com/repos/{relay_repo}/issues/{relay_num}", relay_token, "PATCH", {"state": "closed"})
+          EOF
