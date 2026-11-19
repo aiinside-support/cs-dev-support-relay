@@ -53,18 +53,28 @@ jobs:
               q_body = "\n".join(q_lines).strip() or "（記載なし）"
               return author, q_body
 
-          # タイトル、または本文中の「管理番号：#20」「■ #20」「#20」からIssue番号を確実に抽出
+          parts = body.split("===\n", 1)
+          content = parts[1].strip() if len(parts) > 1 else body.strip()
+          combined = f"{title} {body}"
+
+          # 1. まず数字（#20など）が直接含まれていれば取得
           m = (
               re.search(r"(\d+)", title)
-              or re.search(r"管理番号[:：]?\s*#?(\d+)", body)
-              or re.search(r"■\s*#(\d+)", body)
+              or re.search(r"(?:Issue番号|管理番号)[:：]?\s*#?(\d+)", body)
               or re.search(r"#(\d+)", body)
           )
           issue_num = m.group(1) if m else ""
 
-          parts = body.split("===\n", 1)
-          content = parts[1].strip() if len(parts) > 1 else body.strip()
-          combined = f"{title} {body}"
+          # 2. 数字がない場合、既存Issue一覧のタイトルが本文中に含まれているか照合して特定
+          if not issue_num and "[LIST_REQUEST]" not in combined and "Issue一覧" not in combined:
+              all_issues = gh_api(f"https://api.github.com/repos/{target_repo}/issues?state=all&per_page=100", target_token)
+              for it in all_issues:
+                  if "pull_request" in it:
+                      continue
+                  it_title = (it.get("title") or "").strip()
+                  if it_title and it_title in body:
+                      issue_num = str(it["number"])
+                      break
 
           if "[LIST_REQUEST]" in combined or "Issue一覧" in combined:
               issues = gh_api(f"https://api.github.com/repos/{target_repo}/issues?state=open&per_page=50", target_token)
@@ -108,12 +118,13 @@ jobs:
               )
 
           elif "[CLOSE_REQUEST]" in combined or "Issue完了" in combined:
-              gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}/comments", target_token, "POST", {"body": f"{content}\n\n（CS側より完了操作が実行されました）"})
+              clean_close = "\n".join([ln for ln in content.splitlines() if "Issue完了" not in ln]).strip()
+              gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}/comments", target_token, "POST", {"body": f"{clean_close}\n\n（CS側より完了操作が実行されました）"})
               gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}", target_token, "PATCH", {"state": "closed", "labels": ["status: 完了"]})
               reply_text = f"管理番号：#{issue_num} を完了（クローズ）にしました。"
 
           else:
-              clean_comment = re.sub(r"Issue追加質問\s*", "", content).strip()
+              clean_comment = "\n".join([ln for ln in content.splitlines() if "Issue追加質問" not in ln]).strip()
               gh_api(f"https://api.github.com/repos/{target_repo}/issues/{issue_num}/comments", target_token, "POST", {"body": clean_comment})
               reply_text = f"管理番号：#{issue_num} にコメントを追記しました。"
 
