@@ -138,10 +138,11 @@ jobs:
                           )
                       elif "[CLOSE_REQUEST]" in cmd_target or "Issue完了" in cmd_target:
                           txt = format_comment(current_msg, "Issue完了")
+                          c_body = f"{txt}\n\nIssue完了" if txt else "Issue完了"
                           api(
                               f"https://api.github.com/repos/{t_repo}/issues/{num}/comments",
                               t_tok, "POST",
-                              {"body": f"{txt}\n\n（CS側より完了操作が実行されました）"}
+                              {"body": c_body}
                           )
                           api(
                               f"https://api.github.com/repos/{t_repo}/issues/{num}",
