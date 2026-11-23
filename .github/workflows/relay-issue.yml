@@ -156,6 +156,11 @@ jobs:
                               t_tok, "POST",
                               {"body": txt}
                           )
+                          api(
+                              f"https://api.github.com/repos/{t_repo}/issues/{num}",
+                              t_tok, "PATCH",
+                              {"labels": ["status: 追加項目"]}
+                          )
                           reply = f"管理番号：#{num} にコメントを追記しました。"
                   except urllib.error.HTTPError as e:
                       reply = f"Issue #{num} の取得に失敗しました（HTTP {e.code} / thread_id: {tid}）。"
