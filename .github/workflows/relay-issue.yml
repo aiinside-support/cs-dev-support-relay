@@ -58,10 +58,9 @@ jobs:
           def format_comment(raw_txt, skip_word):
               lines = [ln.strip() for ln in raw_txt.splitlines() if skip_word not in ln and ln.strip()]
               joined = "\n".join(lines)
-              # 改行がスペースに潰れた箇条書き（・や-や1.）の前に改行を復元
               joined = re.sub(r"[  ]+([・●■◆\-]|\d+[\.．\)）])", r"\n\1", joined)
-              # GitHubコメントで改行が確実に反映されるよう各行末に半角スペース2つを付与
-              return "\n".join(f"{ln}  " for ln in joined.splitlines())
+              joined = re.sub(r"^(CSからの返信[^：:\n]*[：:])\n*", r"\1\n\n", joined)
+              return "\n".join(f"{ln}  " if ln else "" for ln in joined.splitlines())
 
           parts = body.split("===\n", 1)
           after_sep = parts[1] if len(parts) > 1 else body
