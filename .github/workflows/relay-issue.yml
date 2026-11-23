@@ -95,12 +95,24 @@ jobs:
                   or re.search(r"(?:Issue番号|管理番号)\s*[:：]\s*#?(\d+)", plain_body)
               )
               num = m.group(1) if m else ""
+
+              # 1. JSONのreplyToId（親スレッドID）からcs-dev-supportのthread_idを直接照合
               if not num and "[LIST_REQUEST]" not in cmd_target and "Issue一覧" not in cmd_target:
+                  tm = re.search(r'"replyToId"\s*:\s*"(\d+)"', body) or re.search(r"messages\('(\d+)'\)", body)
+                  tid = tm.group(1) if tm else ""
                   url = f"https://api.github.com/repos/{t_repo}/issues?state=all&per_page=100"
-                  for it in api(url, t_tok):
-                      if "pull_request" not in it and (it.get("title") or "").strip() in plain_body:
-                          num = str(it["number"])
-                          break
+                  all_it = [it for it in api(url, t_tok) if "pull_request" not in it]
+                  if tid:
+                      for it in all_it:
+                          if tid in (it.get("body") or ""):
+                              num = str(it["number"])
+                              break
+                  if not num:
+                      for it in all_it:
+                          t_str = (it.get("title") or "").strip()
+                          if t_str and t_str in plain_body:
+                              num = str(it["number"])
+                              break
 
               if "[LIST_REQUEST]" in cmd_target or "Issue一覧" in cmd_target:
                   url = f"https://api.github.com/repos/{t_repo}/issues?state=open&per_page=50"
