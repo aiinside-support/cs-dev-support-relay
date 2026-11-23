@@ -53,6 +53,7 @@ jobs:
                       continue
                   lines.append(re.sub(r"^#+\s*", "", s))
               clean_body = re.sub(r"\n{2,}", lambda m: "\n" * max(1, len(m.group(0)) // 2), "\n".join(lines).strip())
+              clean_body = re.sub(r"\n*(thread_id\s*[:：])", r"\n\n\1", clean_body)
               created = api(f"https://api.github.com/repos/{t_repo}/issues", t_tok, "POST", {"title": title, "body": clean_body, "labels": create_labels})
               reply = f"✅ 開発チームへ起票しました（Issue番号：#{created['number']}）"
           else:
@@ -74,19 +75,10 @@ jobs:
                   reply = "管理番号（Issue番号）を特定できませんでした。"
               elif "[DETAIL_REQUEST]" in comb or "Issue詳細" in comb:
                   it = api(f"https://api.github.com/repos/{t_repo}/issues/{num}", t_tok)
-                  st = " / ".join(re.sub(r"^status:\s*", "", l["name"]) for l in it.get("labels", [])) or "未設定"
+                  st = " / ".join(re.sub(r"^status:\s*', '', l["name"]) for l in it.get("labels", [])) or "未設定"
                   cmts = api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok)
                   c_txt = "\n\n".join(f"・{c['user']['login']}：\n{c.get('body', '')}" for c in cmts) if cmts else "（コメントはまだありません）"
                   reply = f"■ #{num} {it.get('title', '（タイトルなし）')}\nステータス：{st}\n起票者：{author_of(it.get('body'))}\n--------------------\n【コメント履歴】\n{c_txt}"
               elif "[CLOSE_REQUEST]" in comb or "Issue完了" in comb:
                   txt = "\n".join(ln for ln in content.splitlines() if "Issue完了" not in ln).strip()
-                  api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok, "POST", {"body": f"{txt}\n\n（CS側より完了操作が実行されました）"})
-                  api(f"https://api.github.com/repos/{t_repo}/issues/{num}", t_tok, "PATCH", {"state": "closed", "labels": ["status: 完了"]})
-                  reply = f"管理番号：#{num} を完了（クローズ）にしました。"
-              else:
-                  txt = "\n".join(ln for ln in content.splitlines() if "Issue追加質問" not in ln).strip()
-                  api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok, "POST", {"body": txt})
-                  reply = f"管理番号：#{num} にコメントを追記しました。"
-
-          api(f"https://api.github.com/repos/{r_repo}/issues/{r_num}", r_tok, "PATCH", {"body": reply, "state": "closed"})
-          EOF
+                  api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok, "POST", {"body": f"{txt}\n\n（CS側より完了操作が実行されました）
