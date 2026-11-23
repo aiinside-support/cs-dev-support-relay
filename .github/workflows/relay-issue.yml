@@ -16,6 +16,7 @@ jobs:
           RELAY_ISSUE_NUMBER: ${{ github.event.issue.number }}
           RELAY_TITLE: ${{ github.event.issue.title }}
           RELAY_BODY: ${{ github.event.issue.body }}
+          RELAY_LABELS: ${{ toJson(github.event.issue.labels.*.name) }}
         run: |
           python3 - << 'EOF'
           import os, re, json, urllib.request
@@ -23,6 +24,7 @@ jobs:
           r_tok, t_tok = os.environ["RELAY_TOKEN"], os.environ["TARGET_TOKEN"]
           r_repo, r_num = os.environ["RELAY_REPO"], os.environ["RELAY_ISSUE_NUMBER"]
           title, body = os.environ.get("RELAY_TITLE", ""), os.environ.get("RELAY_BODY", "")
+          r_labels = json.loads(os.environ.get("RELAY_LABELS", "[]"))
           t_repo = "aiinside-support/cs-dev-support"
 
           def api(url, tok, method="GET", data=None):
@@ -39,39 +41,52 @@ jobs:
                       return m.group(1).strip()
               return "不明"
 
-          parts = body.split("===\n", 1)
-          content = parts[1].strip() if len(parts) > 1 else body.strip()
           comb = f"{title} {body}"
+          is_cmd = any(k in comb for k in ["[LIST_REQUEST]", "[DETAIL_REQUEST]", "[CLOSE_REQUEST]", "[REPLY_REQUEST]", "action:comment", "action:close", "Issue一覧", "Issue詳細", "Issue完了"])
 
-          m = re.search(r"(\d+)", title) or re.search(r"(?:Issue番号|管理番号)[:：]?\s*#?(\d+)", body) or re.search(r"#(\d+)", body)
-          num = m.group(1) if m else ""
-          if not num and "[LIST_REQUEST]" not in comb and "Issue一覧" not in comb:
-              for it in api(f"https://api.github.com/repos/{t_repo}/issues?state=all&per_page=100", t_tok):
-                  if "pull_request" not in it and (it.get("title") or "").strip() in body:
-                      num = str(it["number"])
-                      break
-
-          if "[LIST_REQUEST]" in comb or "Issue一覧" in comb:
-              items = [it for it in api(f"https://api.github.com/repos/{t_repo}/issues?state=open&per_page=50", t_tok) if "pull_request" not in it]
-              lines = [f"・#{it['number']} [{' / '.join(re.sub(r'^status:\s*', '', l['name']) for l in it.get('labels', [])) or '未設定'}] {it.get('title', '')}（起票者：{author_of(it.get('body'))}）" for it in items]
-              reply = "【対応中のIssue一覧】\n" + ("\n".join(lines) if lines else "現在対応中（Open）のIssueはありません。")
-          elif not num:
-              reply = "管理番号（Issue番号）を特定できませんでした。"
-          elif "[DETAIL_REQUEST]" in comb or "Issue詳細" in comb:
-              it = api(f"https://api.github.com/repos/{t_repo}/issues/{num}", t_tok)
-              st = " / ".join(re.sub(r"^status:\s*", "", l["name"]) for l in it.get("labels", [])) or "未設定"
-              cmts = api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok)
-              c_txt = "\n\n".join(f"・{c['user']['login']}：\n{c.get('body', '')}" for c in cmts) if cmts else "（コメントはまだありません）"
-              reply = f"■ #{num} {it.get('title', '（タイトルなし）')}\nステータス：{st}\n起票者：{author_of(it.get('body'))}\n--------------------\n【コメント履歴】\n{c_txt}"
-          elif "[CLOSE_REQUEST]" in comb or "Issue完了" in comb:
-              txt = "\n".join(ln for ln in content.splitlines() if "Issue完了" not in ln).strip()
-              api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok, "POST", {"body": f"{txt}\n\n（CS側より完了操作が実行されました）"})
-              api(f"https://api.github.com/repos/{t_repo}/issues/{num}", t_tok, "PATCH", {"state": "closed", "labels": ["status: 完了"]})
-              reply = f"管理番号：#{num} を完了（クローズ）にしました。"
+          # 1. 新規起票（status: 新規 ラベル付き、またはコマンドタグなし）
+          if "status: 新規" in r_labels or not is_cmd:
+              create_labels = r_labels if r_labels else ["status: 新規"]
+              created = api(f"https://api.github.com/repos/{t_repo}/issues", t_tok, "POST", {
+                  "title": title,
+                  "body": body,
+                  "labels": create_labels
+              })
+              new_num = created["number"]
+              reply = f"✅ 開発チームへ起票しました（Issue番号：#{new_num}）"
           else:
-              txt = "\n".join(ln for ln in content.splitlines() if "Issue追加質問" not in ln).strip()
-              api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok, "POST", {"body": txt})
-              reply = f"管理番号：#{num} にコメントを追記しました。"
+              parts = body.split("===\n", 1)
+              content = parts[1].strip() if len(parts) > 1 else body.strip()
+
+              m = re.search(r"(\d+)", title) or re.search(r"(?:Issue番号|管理番号)[:：]?\s*#?(\d+)", body) or re.search(r"#(\d+)", body)
+              num = m.group(1) if m else ""
+              if not num and "[LIST_REQUEST]" not in comb and "Issue一覧" not in comb:
+                  for it in api(f"https://api.github.com/repos/{t_repo}/issues?state=all&per_page=100", t_tok):
+                      if "pull_request" not in it and (it.get("title") or "").strip() in body:
+                          num = str(it["number"])
+                          break
+
+              if "[LIST_REQUEST]" in comb or "Issue一覧" in comb:
+                  items = [it for it in api(f"https://api.github.com/repos/{t_repo}/issues?state=open&per_page=50", t_tok) if "pull_request" not in it]
+                  lines = [f"・#{it['number']} [{' / '.join(re.sub(r'^status:\s*', '', l['name']) for l in it.get('labels', [])) or '未設定'}] {it.get('title', '')}（起票者：{author_of(it.get('body'))}）" for it in items]
+                  reply = "【対応中のIssue一覧】\n" + ("\n".join(lines) if lines else "現在対応中（Open）のIssueはありません。")
+              elif not num:
+                  reply = "管理番号（Issue番号）を特定できませんでした。"
+              elif "[DETAIL_REQUEST]" in comb or "Issue詳細" in comb:
+                  it = api(f"https://api.github.com/repos/{t_repo}/issues/{num}", t_tok)
+                  st = " / ".join(re.sub(r"^status:\s*", "", l["name"]) for l in it.get("labels", [])) or "未設定"
+                  cmts = api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok)
+                  c_txt = "\n\n".join(f"・{c['user']['login']}：\n{c.get('body', '')}" for c in cmts) if cmts else "（コメントはまだありません）"
+                  reply = f"■ #{num} {it.get('title', '（タイトルなし）')}\nステータス：{st}\n起票者：{author_of(it.get('body'))}\n--------------------\n【コメント履歴】\n{c_txt}"
+              elif "[CLOSE_REQUEST]" in comb or "Issue完了" in comb:
+                  txt = "\n".join(ln for ln in content.splitlines() if "Issue完了" not in ln).strip()
+                  api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok, "POST", {"body": f"{txt}\n\n（CS側より完了操作が実行されました）"})
+                  api(f"https://api.github.com/repos/{t_repo}/issues/{num}", t_tok, "PATCH", {"state": "closed", "labels": ["status: 完了"]})
+                  reply = f"管理番号：#{num} を完了（クローズ）にしました。"
+              else:
+                  txt = "\n".join(ln for ln in content.splitlines() if "Issue追加質問" not in ln).strip()
+                  api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok, "POST", {"body": txt})
+                  reply = f"管理番号：#{num} にコメントを追記しました。"
 
           api(f"https://api.github.com/repos/{r_repo}/issues/{r_num}", r_tok, "PATCH", {"body": reply, "state": "closed"})
           EOF
