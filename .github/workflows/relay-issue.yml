@@ -36,7 +36,7 @@ jobs:
 
           def author_of(txt):
               for ln in (txt or "").splitlines():
-                  m = re.match(r"^起票者[:：]\s*(.+)$", ln.replace("**", "").strip())
+                  m = re.match(r"^起票者[:：]\s*(.+)$", ln.replace("**", "").lstrip("# ").strip())
                   if m:
                       return m.group(1).strip()
               return "不明"
@@ -46,7 +46,14 @@ jobs:
 
           if "status: 新規" in r_labels or not is_cmd:
               create_labels = r_labels if r_labels else ["status: 新規"]
-              clean_body = re.sub(r"\n{2,}", "\n", body.replace("\r\n", "\n")).strip()
+              lines = []
+              for ln in body.replace("\r\n", "\n").splitlines():
+                  s = ln.strip()
+                  if not s or set(s) <= {"=", "-"}:
+                      continue
+                  s = re.sub(r"^#+\s*", "", s)
+                  lines.append(s)
+              clean_body = "\n".join(lines)
               created = api(f"https://api.github.com/repos/{t_repo}/issues", t_tok, "POST", {
                   "title": title,
                   "body": clean_body,
