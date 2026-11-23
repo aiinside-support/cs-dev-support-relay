@@ -55,6 +55,14 @@ jobs:
               names = [re.sub(r"^status:\s*", "", l["name"]) for l in lbs]
               return " / ".join(names) or "未設定"
 
+          def format_comment(raw_txt, skip_word):
+              lines = [ln.strip() for ln in raw_txt.splitlines() if skip_word not in ln and ln.strip()]
+              joined = "\n".join(lines)
+              # 改行がスペースに潰れた箇条書き（・や-や1.）の前に改行を復元
+              joined = re.sub(r"[  ]+([・●■◆\-]|\d+[\.．\)）])", r"\n\1", joined)
+              # GitHubコメントで改行が確実に反映されるよう各行末に半角スペース2つを付与
+              return "\n".join(f"{ln}  " for ln in joined.splitlines())
+
           parts = body.split("===\n", 1)
           after_sep = parts[1] if len(parts) > 1 else body
           current_msg = after_sep.split('{"@odata.', 1)[0].strip()
@@ -89,7 +97,6 @@ jobs:
               )
               reply = f"✅ 開発チームへ起票しました（Issue番号：#{res['number']}）"
           else:
-              # 1. 最優先：JSONのreplyToId（親スレッドID）からcs-dev-supportのthread_idを直接照合
               num = ""
               tm = re.search(r'"replyToId"\s*:\s*"(\d+)"', body) or re.search(r"messages\('(\d+)'\)", body)
               tid = tm.group(1) if tm else ""
@@ -100,7 +107,6 @@ jobs:
                           num = str(it["number"])
                           break
 
-              # 2. 次点：コマンド本文中の明示的な番号指定
               if not num:
                   m = re.search(r"(?:Issue番号|管理番号)\s*[:：]\s*#?(\d+)", current_msg) or re.search(r"#(\d+)", current_msg)
                   num = m.group(1) if m else ""
@@ -132,7 +138,7 @@ jobs:
                               f"【コメント履歴】\n{c_txt}"
                           )
                       elif "[CLOSE_REQUEST]" in cmd_target or "Issue完了" in cmd_target:
-                          txt = "\n".join(ln for ln in current_msg.splitlines() if "Issue完了" not in ln).strip()
+                          txt = format_comment(current_msg, "Issue完了")
                           api(
                               f"https://api.github.com/repos/{t_repo}/issues/{num}/comments",
                               t_tok, "POST",
@@ -145,7 +151,7 @@ jobs:
                           )
                           reply = f"管理番号：#{num} を完了（クローズ）にしました。"
                       else:
-                          txt = "\n".join(ln for ln in current_msg.splitlines() if "Issue追加質問" not in ln).strip()
+                          txt = format_comment(current_msg, "Issue追加質問")
                           api(
                               f"https://api.github.com/repos/{t_repo}/issues/{num}/comments",
                               t_tok, "POST",
