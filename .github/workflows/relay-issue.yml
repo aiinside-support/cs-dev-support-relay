@@ -55,13 +55,18 @@ jobs:
               names = [re.sub(r"^status:\s*", "", l["name"]) for l in lbs]
               return " / ".join(names) or "未設定"
 
-          comb = f"{title} {body}"
+          # 過去の返信履歴(JSON)を除いた「今回の入力部分」だけでコマンド種別を判定する
+          parts = body.split("===\n", 1)
+          after_sep = parts[1] if len(parts) > 1 else body
+          current_msg = after_sep.split('{"@odata.', 1)[0].strip()
+          cmd_target = f"{title} {current_msg}"
+
           cmds = [
               "[LIST_REQUEST]", "[DETAIL_REQUEST]", "[CLOSE_REQUEST]",
               "[REPLY_REQUEST]", "action:comment", "action:close",
               "Issue一覧", "Issue詳細", "Issue完了"
           ]
-          is_cmd = any(k in comb for k in cmds)
+          is_cmd = any(k in cmd_target for k in cmds)
 
           if "status: 新規" in r_labels or not is_cmd:
               lbs = r_labels if r_labels else ["status: 新規"]
@@ -85,22 +90,20 @@ jobs:
               )
               reply = f"✅ 開発チームへ起票しました（Issue番号：#{res['number']}）"
           else:
-              parts = body.split("===\n", 1)
-              content = parts[1].strip() if len(parts) > 1 else body.strip()
               m = (
                   re.search(r"(\d+)", title)
                   or re.search(r"(?:Issue番号|管理番号)[:：]?\s*#?(\d+)", body)
                   or re.search(r"#(\d+)", body)
               )
               num = m.group(1) if m else ""
-              if not num and "[LIST_REQUEST]" not in comb and "Issue一覧" not in comb:
+              if not num and "[LIST_REQUEST]" not in cmd_target and "Issue一覧" not in cmd_target:
                   url = f"https://api.github.com/repos/{t_repo}/issues?state=all&per_page=100"
                   for it in api(url, t_tok):
                       if "pull_request" not in it and (it.get("title") or "").strip() in body:
                           num = str(it["number"])
                           break
 
-              if "[LIST_REQUEST]" in comb or "Issue一覧" in comb:
+              if "[LIST_REQUEST]" in cmd_target or "Issue一覧" in cmd_target:
                   url = f"https://api.github.com/repos/{t_repo}/issues?state=open&per_page=50"
                   items = [it for it in api(url, t_tok) if "pull_request" not in it]
                   rows = [
@@ -110,7 +113,7 @@ jobs:
                   reply = "【対応中のIssue一覧】\n" + ("\n".join(rows) if rows else "現在対応中（Open）のIssueはありません。")
               elif not num:
                   reply = "管理番号（Issue番号）を特定できませんでした。"
-              elif "[DETAIL_REQUEST]" in comb or "Issue詳細" in comb:
+              elif "[DETAIL_REQUEST]" in cmd_target or "Issue詳細" in cmd_target:
                   it = api(f"https://api.github.com/repos/{t_repo}/issues/{num}", t_tok)
                   cmts = api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok)
                   if cmts:
@@ -124,8 +127,8 @@ jobs:
                       f"--------------------\n"
                       f"【コメント履歴】\n{c_txt}"
                   )
-              elif "[CLOSE_REQUEST]" in comb or "Issue完了" in comb:
-                  txt = "\n".join(ln for ln in content.splitlines() if "Issue完了" not in ln).strip()
+              elif "[CLOSE_REQUEST]" in cmd_target or "Issue完了" in cmd_target:
+                  txt = "\n".join(ln for ln in current_msg.splitlines() if "Issue完了" not in ln).strip()
                   api(
                       f"https://api.github.com/repos/{t_repo}/issues/{num}/comments",
                       t_tok, "POST",
@@ -138,7 +141,7 @@ jobs:
                   )
                   reply = f"管理番号：#{num} を完了（クローズ）にしました。"
               else:
-                  txt = "\n".join(ln for ln in content.splitlines() if "Issue追加質問" not in ln).strip()
+                  txt = "\n".join(ln for ln in current_msg.splitlines() if "Issue追加質問" not in ln).strip()
                   api(
                       f"https://api.github.com/repos/{t_repo}/issues/{num}/comments",
                       t_tok, "POST",
