@@ -55,7 +55,6 @@ jobs:
               names = [re.sub(r"^status:\s*", "", l["name"]) for l in lbs]
               return " / ".join(names) or "未設定"
 
-          # 過去の返信履歴(JSON)を除いた「今回の入力部分」だけでコマンド種別を判定する
           parts = body.split("===\n", 1)
           after_sep = parts[1] if len(parts) > 1 else body
           current_msg = after_sep.split('{"@odata.', 1)[0].strip()
@@ -119,7 +118,7 @@ jobs:
                   if cmts:
                       c_txt = "\n\n".join(f"・{c['user']['login']}：\n{c.get('body', '')}" for c in cmts)
                   else:
-                      c_txt = "（コメントはまだありません）"
+                      c_txt = "コメントなし"
                   reply = (
                       f"■ #{num} {it.get('title', '（タイトルなし）')}\n"
                       f"ステータス：{get_status(it)}\n"
