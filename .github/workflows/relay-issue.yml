@@ -49,11 +49,11 @@ jobs:
               lines = []
               for ln in body.replace("\r\n", "\n").splitlines():
                   s = ln.strip()
-                  if not s or set(s) <= {"=", "-"}:
+                  if s and set(s) <= {"=", "-"}:
                       continue
-                  s = re.sub(r"^#+\s*", "", s)
-                  lines.append(s)
-              clean_body = "\n".join(lines)
+                  lines.append(re.sub(r"^#+\s*", "", s))
+              raw_joined = "\n".join(lines).strip()
+              clean_body = re.sub(r"\n{2,}", lambda m: "\n" * max(1, len(m.group(0)) // 2), raw_joined)
               created = api(f"https://api.github.com/repos/{t_repo}/issues", t_tok, "POST", {
                   "title": title,
                   "body": clean_body,
@@ -88,12 +88,4 @@ jobs:
               elif "[CLOSE_REQUEST]" in comb or "Issue完了" in comb:
                   txt = "\n".join(ln for ln in content.splitlines() if "Issue完了" not in ln).strip()
                   api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok, "POST", {"body": f"{txt}\n\n（CS側より完了操作が実行されました）"})
-                  api(f"https://api.github.com/repos/{t_repo}/issues/{num}", t_tok, "PATCH", {"state": "closed", "labels": ["status: 完了"]})
-                  reply = f"管理番号：#{num} を完了（クローズ）にしました。"
-              else:
-                  txt = "\n".join(ln for ln in content.splitlines() if "Issue追加質問" not in ln).strip()
-                  api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok, "POST", {"body": txt})
-                  reply = f"管理番号：#{num} にコメントを追記しました。"
-
-          api(f"https://api.github.com/repos/{r_repo}/issues/{r_num}", r_tok, "PATCH", {"body": reply, "state": "closed"})
-          EOF
+                  api(f"
