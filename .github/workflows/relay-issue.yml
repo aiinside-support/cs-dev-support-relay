@@ -64,8 +64,24 @@ jobs:
 
           parts = body.split("===\n", 1)
           after_sep = parts[1] if len(parts) > 1 else body
-          current_msg = after_sep.split('{"@odata.', 1)[0].strip()
-          cmd_target = f"{title} {current_msg}"
+          split_json = after_sep.split('{"@odata.', 1)
+          current_msg = split_json[0].strip()
+
+          # JSON内の最新返信からメンション名と本文も抽出する
+          latest_mention = ""
+          if len(split_json) > 1:
+              try:
+                  jdata = json.loads('{"@odata.' + split_json[1])
+                  vals = jdata.get("value", [])
+                  if vals:
+                      last_item = vals[-1]
+                      m_names = [m.get("mentionText", "") for m in last_item.get("mentions", [])]
+                      c_html = last_item.get("body", {}).get("content", "")
+                      latest_mention = " ".join(m_names) + " " + re.sub(r"<[^>]+>", " ", c_html)
+              except Exception:
+                  pass
+
+          cmd_target = f"{title} {current_msg} {latest_mention}"
 
           cmds = [
               "[LIST_REQUEST]", "[DETAIL_REQUEST]", "[CLOSE_REQUEST]",
@@ -136,13 +152,11 @@ jobs:
                               f"--------------------\n"
                               f"【コメント履歴】\n{c_txt}"
                           )
-                      elif "[CLOSE_REQUEST]" in cmd_target or "Issue完了" in cmd_target:
-                          txt = format_comment(current_msg, "Issue完了")
-                          c_body = f"{txt}\n\nIssue完了" if txt else "Issue完了"
+                      elif any(k in cmd_target for k in ["[CLOSE_REQUEST]", "action:close", "Issue完了"]):
                           api(
                               f"https://api.github.com/repos/{t_repo}/issues/{num}/comments",
                               t_tok, "POST",
-                              {"body": c_body}
+                              {"body": "Issue完了"}
                           )
                           api(
                               f"https://api.github.com/repos/{t_repo}/issues/{num}",
