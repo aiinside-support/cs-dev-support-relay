@@ -19,7 +19,7 @@ jobs:
           RELAY_LABELS: ${{ toJson(github.event.issue.labels.*.name) }}
         run: |
           python3 - << 'EOF'
-          import os, re, json, urllib.request
+          import os, re, json, urllib.request, urllib.error
 
           r_tok = os.environ["RELAY_TOKEN"]
           t_tok = os.environ["TARGET_TOKEN"]
@@ -89,30 +89,21 @@ jobs:
               )
               reply = f"✅ 開発チームへ起票しました（Issue番号：#{res['number']}）"
           else:
-              plain_body = re.sub(r"<[^>]+>", " ", body)
-              m = (
-                  re.search(r"(\d+)", title)
-                  or re.search(r"(?:Issue番号|管理番号)\s*[:：]\s*#?(\d+)", plain_body)
-              )
-              num = m.group(1) if m else ""
-
-              # 1. JSONのreplyToId（親スレッドID）からcs-dev-supportのthread_idを直接照合
-              if not num and "[LIST_REQUEST]" not in cmd_target and "Issue一覧" not in cmd_target:
-                  tm = re.search(r'"replyToId"\s*:\s*"(\d+)"', body) or re.search(r"messages\('(\d+)'\)", body)
-                  tid = tm.group(1) if tm else ""
+              # 1. 最優先：JSONのreplyToId（親スレッドID）からcs-dev-supportのthread_idを直接照合
+              num = ""
+              tm = re.search(r'"replyToId"\s*:\s*"(\d+)"', body) or re.search(r"messages\('(\d+)'\)", body)
+              tid = tm.group(1) if tm else ""
+              if tid:
                   url = f"https://api.github.com/repos/{t_repo}/issues?state=all&per_page=100"
-                  all_it = [it for it in api(url, t_tok) if "pull_request" not in it]
-                  if tid:
-                      for it in all_it:
-                          if tid in (it.get("body") or ""):
-                              num = str(it["number"])
-                              break
-                  if not num:
-                      for it in all_it:
-                          t_str = (it.get("title") or "").strip()
-                          if t_str and t_str in plain_body:
-                              num = str(it["number"])
-                              break
+                  for it in api(url, t_tok):
+                      if "pull_request" not in it and tid in (it.get("body") or ""):
+                          num = str(it["number"])
+                          break
+
+              # 2. 次点：コマンド本文中の明示的な番号指定
+              if not num:
+                  m = re.search(r"(?:Issue番号|管理番号)\s*[:：]\s*#?(\d+)", current_msg) or re.search(r"#(\d+)", current_msg)
+                  num = m.group(1) if m else ""
 
               if "[LIST_REQUEST]" in cmd_target or "Issue一覧" in cmd_target:
                   url = f"https://api.github.com/repos/{t_repo}/issues?state=open&per_page=50"
@@ -123,42 +114,46 @@ jobs:
                   ]
                   reply = "【対応中のIssue一覧】\n" + ("\n".join(rows) if rows else "現在対応中（Open）のIssueはありません。")
               elif not num:
-                  reply = "管理番号（Issue番号）を特定できませんでした。"
-              elif "[DETAIL_REQUEST]" in cmd_target or "Issue詳細" in cmd_target:
-                  it = api(f"https://api.github.com/repos/{t_repo}/issues/{num}", t_tok)
-                  cmts = api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok)
-                  if cmts:
-                      c_txt = "\n\n".join(f"・{c['user']['login']}：\n{c.get('body', '')}" for c in cmts)
-                  else:
-                      c_txt = "コメントなし"
-                  reply = (
-                      f"■ #{num} {it.get('title', '（タイトルなし）')}\n"
-                      f"ステータス：{get_status(it)}\n"
-                      f"起票者：{get_author(it.get('body'))}\n"
-                      f"--------------------\n"
-                      f"【コメント履歴】\n{c_txt}"
-                  )
-              elif "[CLOSE_REQUEST]" in cmd_target or "Issue完了" in cmd_target:
-                  txt = "\n".join(ln for ln in current_msg.splitlines() if "Issue完了" not in ln).strip()
-                  api(
-                      f"https://api.github.com/repos/{t_repo}/issues/{num}/comments",
-                      t_tok, "POST",
-                      {"body": f"{txt}\n\n（CS側より完了操作が実行されました）"}
-                  )
-                  api(
-                      f"https://api.github.com/repos/{t_repo}/issues/{num}",
-                      t_tok, "PATCH",
-                      {"state": "closed", "labels": ["status: 完了"]}
-                  )
-                  reply = f"管理番号：#{num} を完了（クローズ）にしました。"
+                  reply = f"管理番号を特定できませんでした（thread_id: {tid or 'なし'}）。"
               else:
-                  txt = "\n".join(ln for ln in current_msg.splitlines() if "Issue追加質問" not in ln).strip()
-                  api(
-                      f"https://api.github.com/repos/{t_repo}/issues/{num}/comments",
-                      t_tok, "POST",
-                      {"body": txt}
-                  )
-                  reply = f"管理番号：#{num} にコメントを追記しました。"
+                  try:
+                      if "[DETAIL_REQUEST]" in cmd_target or "Issue詳細" in cmd_target:
+                          it = api(f"https://api.github.com/repos/{t_repo}/issues/{num}", t_tok)
+                          cmts = api(f"https://api.github.com/repos/{t_repo}/issues/{num}/comments", t_tok)
+                          if cmts:
+                              c_txt = "\n\n".join(f"・{c['user']['login']}：\n{c.get('body', '')}" for c in cmts)
+                          else:
+                              c_txt = "コメントなし"
+                          reply = (
+                              f"■ #{num} {it.get('title', '（タイトルなし）')}\n"
+                              f"ステータス：{get_status(it)}\n"
+                              f"起票者：{get_author(it.get('body'))}\n"
+                              f"--------------------\n"
+                              f"【コメント履歴】\n{c_txt}"
+                          )
+                      elif "[CLOSE_REQUEST]" in cmd_target or "Issue完了" in cmd_target:
+                          txt = "\n".join(ln for ln in current_msg.splitlines() if "Issue完了" not in ln).strip()
+                          api(
+                              f"https://api.github.com/repos/{t_repo}/issues/{num}/comments",
+                              t_tok, "POST",
+                              {"body": f"{txt}\n\n（CS側より完了操作が実行されました）"}
+                          )
+                          api(
+                              f"https://api.github.com/repos/{t_repo}/issues/{num}",
+                              t_tok, "PATCH",
+                              {"state": "closed", "labels": ["status: 完了"]}
+                          )
+                          reply = f"管理番号：#{num} を完了（クローズ）にしました。"
+                      else:
+                          txt = "\n".join(ln for ln in current_msg.splitlines() if "Issue追加質問" not in ln).strip()
+                          api(
+                              f"https://api.github.com/repos/{t_repo}/issues/{num}/comments",
+                              t_tok, "POST",
+                              {"body": txt}
+                          )
+                          reply = f"管理番号：#{num} にコメントを追記しました。"
+                  except urllib.error.HTTPError as e:
+                      reply = f"Issue #{num} の取得に失敗しました（HTTP {e.code} / thread_id: {tid}）。"
 
           api(
               f"https://api.github.com/repos/{r_repo}/issues/{r_num}",
