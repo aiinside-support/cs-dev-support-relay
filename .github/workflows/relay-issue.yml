@@ -89,16 +89,16 @@ jobs:
               )
               reply = f"✅ 開発チームへ起票しました（Issue番号：#{res['number']}）"
           else:
+              plain_body = re.sub(r"<[^>]+>", " ", body)
               m = (
                   re.search(r"(\d+)", title)
-                  or re.search(r"(?:Issue番号|管理番号)[:：]?\s*#?(\d+)", body)
-                  or re.search(r"#(\d+)", body)
+                  or re.search(r"(?:Issue番号|管理番号)\s*[:：]\s*#?(\d+)", plain_body)
               )
               num = m.group(1) if m else ""
               if not num and "[LIST_REQUEST]" not in cmd_target and "Issue一覧" not in cmd_target:
                   url = f"https://api.github.com/repos/{t_repo}/issues?state=all&per_page=100"
                   for it in api(url, t_tok):
-                      if "pull_request" not in it and (it.get("title") or "").strip() in body:
+                      if "pull_request" not in it and (it.get("title") or "").strip() in plain_body:
                           num = str(it["number"])
                           break
 
